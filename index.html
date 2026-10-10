@@ -43,11 +43,27 @@ const OUTCOMES = [
 const wheel=document.getElementById('wheel'),button=document.getElementById('spin');
 let angle=0,busy=false,serverDay=null,midnightTimer=null;
 function point(degrees){const r=(degrees-90)*Math.PI/180;return [200+198*Math.cos(r),200+198*Math.sin(r)];}
-let cursor=0;
-for(const outcome of OUTCOMES){outcome.start=cursor;cursor+=outcome.weight*3.6;outcome.end=cursor;const a=point(outcome.start),b=point(outcome.end);const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',`M200 200 L${a[0]} ${a[1]} A198 198 0 ${outcome.weight>50?1:0} 1 ${b[0]} ${b[1]} Z`);path.setAttribute('fill',outcome.color);wheel.appendChild(path);}
+// 100 lige brede felter. De 31 gevinstfelter spredes jævnt over hele hjulet.
+const SEGMENTS=Array(100).fill(OUTCOMES[0]);
+const prizes=OUTCOMES.slice(1), assigned=prizes.map(()=>0);
+for(let j=0;j<31;j++){
+ let best=0;
+ for(let k=1;k<prizes.length;k++){
+  if((j+1)*prizes[k].weight/31-assigned[k]>(j+1)*prizes[best].weight/31-assigned[best])best=k;
+ }
+ SEGMENTS[Math.floor((j+.5)*100/31)]=prizes[best];assigned[best]++;
+}
+for(let i=0;i<100;i++){
+ const a=point(i*3.6),b=point((i+1)*3.6);
+ const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+ path.setAttribute('d',`M200 200 L${a[0]} ${a[1]} A198 198 0 0 1 ${b[0]} ${b[1]} Z`);
+ path.setAttribute('fill',SEGMENTS[i].color);
+ path.setAttribute('stroke','#fff8e9');path.setAttribute('stroke-width','.6');
+ wheel.appendChild(path);
+}
 // Rejection sampling undgår modulo-bias og giver 100 lige sandsynlige heltal.
 function randomInt(max){const values=new Uint32Array(1),limit=Math.floor(4294967296/max)*max;do{crypto.getRandomValues(values);}while(values[0]>=limit);return values[0]%max;}
-function selectOutcome(ticket){let total=0;for(const outcome of OUTCOMES){total+=outcome.weight;if(ticket<total)return outcome;}throw new Error('Ugyldigt lod');}
+function selectOutcome(ticket){return SEGMENTS[ticket];}
 // Serverens UTC-felter omregnes til kalenderdato i fast UTC+1.
 // Ingen Date.now() eller læsning af enhedens ur anvendes.
 function parseServerTime(data){
@@ -76,7 +92,7 @@ async function fetchServerTime(){
  }finally{clearTimeout(timeout);}
 }
 function readRecords(){const raw=localStorage.getItem(CONFIG.storageKey);if(!raw)return {};const records=JSON.parse(raw);if(!records||typeof records!=='object'||Array.isArray(records))throw new Error('Ugyldige browserdata');return records;}
-function readSaved(day){const record=readRecords()[day];if(!record)return null;if(!OUTCOMES.some(o=>o.id===record.id)||!Number.isFinite(record.angle)||record.day!==day||typeof record.display!=='string')throw new Error('Ugyldigt resultat');return record;}
+function readSaved(day){const record=readRecords()[day];if(!record)return null;if(!OUTCOMES.some(o=>o.id===record.id)||!Number.isFinite(record.angle)||record.day!==day||typeof record.display!=='string')throw new Error('Ugyldigt resultat');const landing=((360-record.angle%360)%360+360)%360;const slot=Math.min(99,Math.floor(landing/3.6));if(SEGMENTS[slot].id!==record.id){const match=SEGMENTS.findIndex(o=>o.id===record.id);record.angle=Math.floor(record.angle/360)*360+360-(match+.5)*3.6;}return record;}
 function ensureStorage(){const probe=CONFIG.storageKey+'-probe';localStorage.setItem(probe,'1');localStorage.removeItem(probe);readRecords();}
 function showResult(record){
  const outcome=OUTCOMES.find(o=>o.id===record.id);
@@ -115,8 +131,8 @@ async function play(){
  try{existing=readSaved(time.day);}catch{showError('storage');return;}
  if(existing){angle=existing.angle;wheel.style.transform=`rotate(${angle}deg)`;showResult(existing);return;}
  button.textContent='Hjulet drejer…';document.getElementById('status').textContent='Drejer…';
- const outcome=selectOutcome(randomInt(100));
- const landing=outcome.start+(outcome.end-outcome.start)*(.2+.6*randomInt(10000)/10000);
+ const ticket=randomInt(100),outcome=selectOutcome(ticket);
+ const landing=(ticket+.2+.6*randomInt(10000)/10000)*3.6;
  const target=(360-landing)%360,next=angle+2160+((target-angle%360+360)%360);
  const record={id:outcome.id,angle:next,day:time.day,display:time.display};
  // Gem før animation. Hver kalenderdato har sit eget resultat.
